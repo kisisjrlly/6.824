@@ -35,7 +35,7 @@ import (
 type ErrCode int
 type State int
 
-const Debug = 1 //0:close 1:open
+const Debug = 0 //0:close 1:open
 
 func lPrint(format string, a ...interface{}) (n int, err error) {
 	if Debug > 0 {
@@ -161,14 +161,25 @@ func (px *Paxos) AcceptDecide(req *DecideReq, rsp *DecideRsp) {
 }
 
 func (px *Paxos) SendDecide(seq int, v interface{}) {
+	ch := make(chan DecideRsp, len(px.peers))
 	for i, p := range px.peers {
 		if i == px.me {
-			rsp := DecideRsp{}
-			px.AcceptDecide(&DecideReq{seq, v, px.me, px.done[px.me]}, &rsp)
+			go func() {
+				rsp := DecideRsp{}
+				px.AcceptDecide(&DecideReq{seq, v, px.me, px.done[px.me]}, &rsp)
+				ch <- rsp
+			}()
 		} else {
-			rsp := DecideRsp{}
-			call(p, "Paxos.AcceotDecide", &DecideReq{seq, v, px.me, px.done[px.me]}, &rsp)
+			go func(host string) {
+				rsp := DecideRsp{}
+				call(p, "Paxos.AcceotDecide", &DecideReq{seq, v, px.me, px.done[px.me]}, &rsp)
+				ch <- rsp
+			}(p)
 		}
+	}
+	//必须都decide
+	for i := 0; i < len(px.peers); i++ {
+		<-ch
 	}
 }
 
@@ -298,7 +309,7 @@ func (px *Paxos) Start(seq int, v interface{}) {
 	if seq < px.Min() {
 		return
 	}
-	fmt.Println("sdfffffff")
+
 	go func() {
 		lPrint("Peers %d is start", px.me)
 		for {
@@ -337,8 +348,9 @@ func (px *Paxos) Done(seq int) {
 //
 func (px *Paxos) Max() int {
 	// Your code here.
+	px.mu.Lock()
+	defer px.mu.Unlock()
 	highest := 0
-
 	for key := range px.instance {
 		if key > highest {
 			highest = key
@@ -379,11 +391,12 @@ func (px *Paxos) Max() int {
 func (px *Paxos) Min() int {
 	// You code here.
 	px.mu.Lock()
-	px.mu.Unlock()
+	defer px.mu.Unlock()
 	ans := 0x7fffffff
-
+	fmt.Println(px.done)
 	for i := range px.done {
 		lPrint("px.done[%d] is %d", i, px.done[i])
+
 		//lPrint("%d", i)
 		if ans > i {
 			ans = px.done[i]
@@ -399,8 +412,9 @@ func (px *Paxos) Min() int {
 			delete(px.instance, seq)
 		}
 	}
+
 	return ans + 1
-	return 0
+
 }
 
 //
